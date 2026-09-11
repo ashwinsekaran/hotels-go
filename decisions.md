@@ -11,3 +11,5 @@ Later
 2. Integrate LLM to validate PII or some harmful/incorrect data(Cross-field consistency)
 3. Deployment related files
 4. Integrate with IDP/Different service providers for auth
+5. Add Docker file/compose for efficient local dev
+6. Add proper SQL DB to store
