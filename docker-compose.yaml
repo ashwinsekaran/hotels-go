@@ -1,0 +1,64 @@
+# Full local stack: the app + traces (Jaeger) + metrics (Prometheus) + logs
+# (Loki/Promtail) + a single Grafana pane over all three. Secrets come from the
+# environment ($VAR / a .env file) — never hard-code them here.
+name: hotels
+
+services:
+  app:
+    build: .
+    image: hotels:local
+    ports:
+      - "8080:8080"
+    environment:
+      HTTP_ADDRESS: ":8080"
+      SHUTDOWN_DELAY: "5s"
+      SERVICE_NAME: "hotels"
+      OTEL_ENDPOINT: "jaeger:4317"          # OTLP gRPC → Jaeger (in-network)
+      AUTH_TOKEN: "${AUTH_TOKEN}"           # from your shell / .env
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"        # accept OTLP on 4317/4318
+    ports:
+      - "16686:16686"                       # Jaeger UI
+      - "4317:4317"                         # OTLP gRPC
+      - "4318:4318"                         # OTLP HTTP
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"                         # Prometheus UI
+
+  loki:
+    image: grafana/loki:3.3.0
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"                         # Loki API (Grafana reads this)
+
+  promtail:
+    image: grafana/promtail:3.3.0
+    command: -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ./deploy/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD}"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./deploy/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "3000:3000"                         # Grafana UI
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
