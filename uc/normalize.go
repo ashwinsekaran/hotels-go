@@ -419,12 +419,12 @@ func sanitizeText(in *string, max int) (string, bool) {
 	return s, truncated
 }
 
-// hotelID is a stable identifier derived from the normalized name+city+country.
-// It is the id for the FIRST record of a dedup group; later fuzzy-matched records
-// adopt the matched hotel's id rather than minting a new one.
+// hotelID is a stable identifier derived from the exactly-normalized
+// name+city+country — the SAME normalization sameHotel uses — so two records that
+// dedup also share an id. It is the id for the first record of a group; later
+// exact-matched records adopt the matched hotel's id rather than minting a new one.
 func hotelID(name, city, country string) string {
-	key := strings.ToLower(strings.TrimSpace(name)) + "|" +
-		strings.ToLower(strings.TrimSpace(city)) + "|" + country
+	key := normalizeNameExact(name) + "|" + normalizeNameExact(city) + "|" + country
 	sum := sha1.Sum([]byte(key))
 	return fmt.Sprintf("%x", sum)
 }

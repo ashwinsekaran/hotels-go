@@ -1,49 +1,67 @@
 package uc
 
-import "testing"
+import (
+	"testing"
 
-func TestNamesSimilar(t *testing.T) {
+	"github.com/ashwinsekaran/hotels-go/ent"
+)
+
+func TestSameHotelExactMatch(t *testing.T) {
 	tests := []struct {
-		a, b string
+		name string
+		a, b ent.Hotel
 		want bool
 	}{
-		{"Hotel Mare Azzurro", "Mare Azzuro Hotel", true}, // word order + typo
-		{"Alpenhof Garni", "Alpenhof", true},              // stopword dropped
-		{"City Lodge Berlin", "Beach Resort Cancun", false},
-		{"Sunset Bay Resort & Spa", "Sunset Bay", true},
+		{
+			"identical, trivial formatting differs",
+			ent.Hotel{Name: "Hotel Mare Azzurro", City: "Rimini", Country: "IT"},
+			ent.Hotel{Name: "hotel  mare   azzurro", City: "rimini", Country: "IT"},
+			true,
+		},
+		{
+			"typo keeps them distinct",
+			ent.Hotel{Name: "Hotel Mare Azzurro", City: "Rimini", Country: "IT"},
+			ent.Hotel{Name: "Mare Azzuro Hotel", City: "Rimini", Country: "IT"},
+			false,
+		},
+		{
+			"reordered words keep them distinct",
+			ent.Hotel{Name: "Hotel Mare Azzurro", City: "Rimini", Country: "IT"},
+			ent.Hotel{Name: "Mare Azzurro Hotel", City: "Rimini", Country: "IT"},
+			false,
+		},
+		{
+			"same name, different city",
+			ent.Hotel{Name: "City Lodge", City: "Berlin", Country: "DE"},
+			ent.Hotel{Name: "City Lodge", City: "Munich", Country: "DE"},
+			false,
+		},
+		{
+			"same name, different country",
+			ent.Hotel{Name: "Grand Hotel", City: "Rimini", Country: "IT"},
+			ent.Hotel{Name: "Grand Hotel", City: "Rimini", Country: "SM"},
+			false,
+		},
 	}
 	for _, tt := range tests {
-		if got := namesSimilar(tt.a, tt.b); got != tt.want {
-			t.Fatalf("namesSimilar(%q,%q) = %v, want %v", tt.a, tt.b, got, tt.want)
-		}
-	}
-}
-
-func TestLevenshtein(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want int
-	}{
-		{"azzurro mare", "azzuro mare", 1},
-		{"", "abc", 3},
-		{"same", "same", 0},
-	}
-	for _, c := range cases {
-		if got := levenshtein(c.a, c.b); got != c.want {
-			t.Fatalf("levenshtein(%q,%q) = %d, want %d", c.a, c.b, got, c.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sameHotel(tt.a, tt.b); got != tt.want {
+				t.Fatalf("sameHotel = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
 // Star reconciliation must be order-independent: the higher-trust source wins
-// regardless of which record arrives first.
+// regardless of which record arrives first. Both records share an EXACT name so
+// they dedup under the exact-match rule.
 func TestMergeStarReconciliationOrderIndependent(t *testing.T) {
 	partnerFirst := ingestPair(t,
 		`{"source":"partner-feed-a","hotel_name":"Hotel Mare Azzurro","city":"Rimini","country":"IT","stars":4}`,
-		`{"source":"scrape-booking-sites","name":"Mare Azzuro Hotel","location":"Rimini, Italien","rating":"3 stars"}`,
+		`{"source":"scrape-booking-sites","name":"Hotel Mare Azzurro","location":"Rimini, Italien","rating":"3 stars"}`,
 	)
 	scrapeFirst := ingestPair(t,
-		`{"source":"scrape-booking-sites","name":"Mare Azzuro Hotel","location":"Rimini, Italien","rating":"3 stars"}`,
+		`{"source":"scrape-booking-sites","name":"Hotel Mare Azzurro","location":"Rimini, Italien","rating":"3 stars"}`,
 		`{"source":"partner-feed-a","hotel_name":"Hotel Mare Azzurro","city":"Rimini","country":"IT","stars":4}`,
 	)
 
@@ -58,7 +76,7 @@ func TestMergeStarReconciliationOrderIndependent(t *testing.T) {
 func TestMergeUnionsAmenitiesAndSources(t *testing.T) {
 	h := ingestPair(t,
 		`{"source":"partner-feed-a","hotel_name":"Hotel Mare Azzurro","city":"Rimini","country":"IT","amenities":"pool,wifi"}`,
-		`{"source":"scrape-booking-sites","name":"Mare Azzuro Hotel","location":"Rimini, Italien","features":["pets allowed","free WiFi"]}`,
+		`{"source":"scrape-booking-sites","name":"Hotel Mare Azzurro","location":"Rimini, Italien","features":["pets allowed","free WiFi"]}`,
 	)
 	for _, want := range []string{"pool", "wifi", "pets"} {
 		if !contains(h.Amenities, want) {

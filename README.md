@@ -60,10 +60,13 @@ flagged, cross-source conflicts.
 - **Currency**: the **incoming (native) currency is the source of truth**. Prices
   are stored as integer minor units + ISO-4217 code and **never converted** at
   ingest. The system only defines the allow-list and representation.
-- **Dedup**: two records are the same hotel when **city + ISO country match
-  exactly** and their **names are fuzzy-similar** (token-sorted, stopword-
-  stripped, Levenshtein ≤ 2). This merges "Hotel Mare Azzurro" / "Mare Azzuro
-  Hotel". Merging unions amenities + sources and reconciles scalars by trust tier.
+- **Dedup**: two records are the same hotel **only** when **city + ISO country**
+  match and the **name matches exactly** (case/whitespace-insensitive, but no
+  fuzzy/typo tolerance). This deliberately keeps "Hotel Mare Azzurro" and "Mare
+  Azzuro Hotel" **distinct** — a spelling/word-order difference may well be two
+  different hotels, and merging them would be wrong. Genuine duplicates (same
+  name bar trivial formatting) merge: unioning amenities + sources and
+  reconciling scalars by trust tier.
 - **Coordinates**: absent coords stay `nil` (**no geocoding**). Supplied coords
   are range-checked and, against a small city-centroid table, flagged when
   implausibly far (catches the Berlin-record-pointing-at-Munich case).

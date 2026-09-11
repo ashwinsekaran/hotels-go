@@ -45,8 +45,9 @@ func decodeFeed(t *testing.T, feed string) []ent.RawHotel {
 	return raws
 }
 
-// The whole real feed: 5 records collapse to 4 hotels (the two Mare Azzurro
-// records dedup), no fatal errors, with expected warnings.
+// The whole real feed: under EXACT name matching the two Mare Azzurro records do
+// NOT merge (name typo + reorder), so 5 records yield 5 distinct hotels, no fatal
+// errors, and the Berlin coordinate-plausibility warning.
 func TestIngestGoldenFeed(t *testing.T) {
 	store := newFakeStore()
 	ingest := MakeIngestHotelsUc(store)
@@ -56,36 +57,61 @@ func TestIngestGoldenFeed(t *testing.T) {
 	if len(res.Errors) != 0 {
 		t.Fatalf("unexpected fatal errors: %+v", res.Errors)
 	}
-	if len(res.Normalized) != 4 {
-		t.Fatalf("want 4 deduped hotels, got %d", len(res.Normalized))
+	if len(res.Normalized) != 5 {
+		t.Fatalf("want 5 distinct hotels (no fuzzy merge), got %d", len(res.Normalized))
 	}
 
-	// The Mare Azzurro pair must have merged: one hotel with both sources.
-	mare := findByCity(res.Normalized, "Rimini")
-	if mare == nil {
-		t.Fatal("Rimini hotel missing")
+	// The two Rimini records must remain distinct, each with a single source and
+	// its own name/stars — they are NOT merged.
+	var rimini []ent.Hotel
+	for _, h := range res.Normalized {
+		if h.City == "Rimini" {
+			rimini = append(rimini, h)
+		}
 	}
-	if len(mare.Sources) != 2 {
-		t.Fatalf("Mare Azzurro not merged, sources = %v", mare.Sources)
+	if len(rimini) != 2 {
+		t.Fatalf("expected 2 distinct Rimini hotels, got %d", len(rimini))
 	}
-	// Trust tier: partner-feed-a (4 stars) beats scrape (3 stars).
-	if mare.Stars == nil || *mare.Stars != 4 {
-		t.Fatalf("star reconciliation wrong: %v", mare.Stars)
-	}
-	// Amenities unioned + canonicalized (pool/wifi/parking + pets).
-	for _, want := range []string{"pool", "wifi", "parking", "pets"} {
-		if !contains(mare.Amenities, want) {
-			t.Fatalf("merged amenities %v missing %q", mare.Amenities, want)
+	for _, h := range rimini {
+		if len(h.Sources) != 1 {
+			t.Fatalf("Rimini hotel %q should have a single source, got %v", h.Name, h.Sources)
 		}
 	}
 
-	// A stars_conflict warning must be surfaced for the Mare Azzurro merge.
-	if !hasWarning(res.Warnings, "stars_conflict") {
-		t.Fatalf("expected stars_conflict warning, got %+v", res.Warnings)
+	// No cross-source star conflict, because nothing merged.
+	if hasWarning(res.Warnings, "stars_conflict") {
+		t.Fatalf("did not expect stars_conflict under exact matching: %+v", res.Warnings)
 	}
-	// City Lodge Berlin coords (actually Munich) must be flagged as implausible.
+	// City Lodge Berlin coords (actually Munich) must still be flagged.
 	if !hasWarning(res.Warnings, "coordinates_implausible") {
 		t.Fatalf("expected coordinates_implausible warning, got %+v", res.Warnings)
+	}
+}
+
+// Genuine duplicates — same name (bar trivial formatting) + same city+country —
+// still merge, unioning sources/amenities and reconciling stars by trust tier.
+func TestIngestExactDuplicateMerges(t *testing.T) {
+	store := newFakeStore()
+	ingest := MakeIngestHotelsUc(store)
+
+	feed := `[
+	  {"source":"partner-feed-a","hotel_name":"Hotel Mare Azzurro","city":"Rimini","country":"IT","stars":4,"amenities":"pool,wifi"},
+	  {"source":"scrape-booking-sites","name":"hotel  mare azzurro","location":"Rimini, Italien","rating":"3 stars","features":["pets allowed"]}
+	]`
+	res := ingest(decodeFeed(t, feed))
+
+	if len(res.Normalized) != 1 {
+		t.Fatalf("exact duplicates should merge to 1, got %d", len(res.Normalized))
+	}
+	h := res.Normalized[0]
+	if len(h.Sources) != 2 {
+		t.Fatalf("sources not unioned: %v", h.Sources)
+	}
+	if h.Stars == nil || *h.Stars != 4 {
+		t.Fatalf("trust-tier star reconciliation wrong: %v", h.Stars)
+	}
+	if !hasWarning(res.Warnings, "stars_conflict") {
+		t.Fatalf("expected stars_conflict warning for the merge, got %+v", res.Warnings)
 	}
 }
 
@@ -196,15 +222,6 @@ func TestIngestIsIdempotent(t *testing.T) {
 }
 
 // ---- helpers ----
-
-func findByCity(hotels []ent.Hotel, city string) *ent.Hotel {
-	for i := range hotels {
-		if hotels[i].City == city {
-			return &hotels[i]
-		}
-	}
-	return nil
-}
 
 func contains(ss []string, want string) bool {
 	for _, s := range ss {
